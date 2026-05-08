@@ -57,7 +57,7 @@ button { margin-top: 10px; margin-right: 5px; }
 
 <body>
 
-<h2>Audio Transcriber</h2>
+<h2>Speech Transcriber</h2>
 
 <div class="container">
     <textarea id="resultado"></textarea>
@@ -167,8 +167,29 @@ async function transcrever() {
     if (data.download_txt) {
         const btn = document.getElementById("btn-download");
         btn.style.display = "inline-block";
+
         btn.onclick = () => {
-            window.location.href = data.download_txt;
+            const texto = document.getElementById("resultado").value;
+
+            const blob = new Blob([texto], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement("a");
+            a.href = url;
+
+            // 🔥 nome baseado no arquivo original
+            const nomeOriginal = arquivos[0]?.name || "transcricao";
+            const nomeSemExt = nomeOriginal.replace(/\.[^/.]+$/, "");
+            const nomeArquivo = nomeSemExt + ".txt";
+
+            a.download = nomeArquivo;
+
+            document.body.appendChild(a);
+            a.click();
+
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
             jobId = null;
         };
     }
