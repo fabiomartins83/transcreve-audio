@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Transcrever áudio</title>
+
+<style>
+body { font-family: Arial; margin: 20px; }
+.container { display: flex; gap: 20px; }
+textarea { width: 60%; height: 300px; }
+.lista { width: 40%; border: 1px solid #ccc; padding: 10px; }
+.arquivo { display: flex; justify-content: space-between; margin-bottom: 5px; }
+button { margin-top: 10px; margin-right: 5px; }
+.btn-azul {
+	background:#2a7ae2; 
+	color:#fff; 
+	border:none; 
+	padding:8px 14px; 
+	border-radius:4px; 
+	cursor:pointer;
+}
+.btn-oculto { display:none; }
+
+#toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+}
+.toast {
+    background: #222;
+    color: #fff;
+    padding: 10px 14px;
+    margin-top: 10px;
+    border-radius: 6px;
+    animation: fade 3s forwards;
+}
+
+#status {
+    width: 60%;
+    height: 80px;
+    border: 1px solid #ccc;
+    margin-top: 10px;
+    padding: 8px;
+    overflow-y: auto;
+    font-size: 14px;
+    background: #f7f7f7;
+}
+
+@keyframes fade {
+    0% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
+}
+</style>
+</head>
+
+<body>
+
+<h2>Audio Transcriber</h2>
+
+<div class="container">
+    <textarea id="resultado"></textarea>
+    <div class="lista" id="lista"></div>
+</div>
+
+<input type="file" id="fileInput" multiple style="display:none;">
+
+<br>
+
+<div id="toast"></div>
+<div id="status"></div>
+
+<button class="btn-azul" onclick="adicionar()">Adicionar arquivos</button>
+<button id="btn-transcrever" class="btn-azul btn-oculto" onclick="transcrever()">Transcrever fala para texto</button>
+<button id="btn-download" class="btn-azul btn-oculto">Baixar arquivo TXT</button>
+<button class="btn-azul" onclick="limpar()">Limpar</button>
+
+<script>
+let arquivos = [];
+let jobId = null;
+
+// -----------------------------
+// FILE PICKER
+// -----------------------------
+function adicionar() {
+    const input = document.getElementById("fileInput");
+    input.value = "";
+    input.click();
+}
+
+document.getElementById("fileInput").addEventListener("change", (e) => {
+
+    const extensoesValidas = [".mp3", ".wav", ".ogg", ".m4a", ".flac"];
+
+    for (let f of e.target.files) {
+        const nome = f.name.toLowerCase();
+
+        const valido = extensoesValidas.some(ext => nome.endsWith(ext));
+
+        if (!valido) {
+            mostrarErro(`Arquivo inválido: ${f.name}`);
+            continue;
+        }
+
+        arquivos.push(f);
+    }
+
+    renderLista();
+});
+
+// -----------------------------
+// LISTA
+// -----------------------------
+function renderLista() {
+    const lista = document.getElementById("lista");
+    lista.innerHTML = "";
+
+    arquivos.forEach((file, index) => {
+        const div = document.createElement("div");
+        div.className = "arquivo";
+
+        div.innerHTML = `
+            ${file.name}
+            <button onclick="remover(${index})">X</button>
+        `;
+
+        lista.appendChild(div);
+    });
+
+    const btn = document.getElementById("btn-transcrever");
+    btn.style.display = arquivos.length > 0 ? "inline-block" : "none";
+}
+
+function remover(i) {
+    arquivos.splice(i, 1);
+    renderLista();
+}
+
+// -----------------------------
+// TRANSCRIÇÃO
+// -----------------------------
+async function transcrever() {
+    if (arquivos.length === 0) {
+        alert("Nenhum arquivo selecionado.");
+        return;
+    }
+
+    const formData = new FormData();
+    arquivos.forEach(f => formData.append("audios", f));
+
+    document.getElementById("resultado").value = "Processando...";
+    document.getElementById("btn-download").style.display = "none";
+
+    const res = await fetch("/transcrever", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await res.json();
+
+    jobId = data.jobId;
+
+    document.getElementById("resultado").value =
+        data.texto || data.erro || "Erro inesperado";
+
+    if (data.download_txt) {
+        const btn = document.getElementById("btn-download");
+        btn.style.display = "inline-block";
+        btn.onclick = () => {
+            window.location.href = data.download_txt;
+            jobId = null;
+        };
+    }
+}
+
+// -----------------------------
+// LIMPAR
+// -----------------------------
+async function limpar() {
+    if (jobId) {
+        await fetch("/limpar", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body: JSON.stringify({ jobId })
+        });
+        jobId = null;
+    }
+
+    arquivos = [];
+    document.getElementById("resultado").value = "";
+    document.getElementById("btn-download").style.display = "none";
+    document.getElementById("btn-transcrever").style.display = "none";
+    document.getElementById("status").innerHTML = "";
+
+    renderLista();
+}
+
+// -----------------------------
+// TOAST
+// -----------------------------
+function mostrarErro(msg) {
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.innerText = msg;
+
+    document.getElementById("toast").appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// -----------------------------
+// EVENTOS (STATUS)
+// -----------------------------
+const evt = new EventSource("/events");
+
+evt.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    const statusBox = document.getElementById("status");
+
+    let msg = data.msg;
+    const isProcessando = msg.includes("Processando");
+    const last = statusBox.lastElementChild;
+
+    if (isProcessando) {
+        if (last && last.dataset.tipo === "processando") {
+            last.innerText = msg; // sobrescreve
+        } else {
+            const div = document.createElement("div");
+            div.innerText = msg;
+            div.dataset.tipo = "processando";
+            statusBox.appendChild(div);
+        }
+    } else {
+        const div = document.createElement("div");
+        div.innerText = msg;
+        div.dataset.tipo = "normal";
+        statusBox.appendChild(div);
+    }
+
+    statusBox.scrollTop = statusBox.scrollHeight;
+};
+</script>
+
+</body>
+</html>
